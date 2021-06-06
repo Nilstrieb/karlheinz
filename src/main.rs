@@ -1,8 +1,9 @@
+use std::error::Error;
 use std::sync::Mutex;
 
 use actix_web::{App, Either, get, HttpResponse, HttpServer, post, Responder, web};
-use actix_web::http::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
+use sqlx::postgres::PgPoolOptions;
 
 macro_rules! impl_responder {
     (for $name: ident) => {
@@ -41,7 +42,6 @@ struct Post {
 struct AppState {
     posts: Mutex<Vec<Post>>,
     hugo: Mutex<Person>,
-    request_amount: Mutex<i32>,
 }
 
 #[get("/post/{id}")]
@@ -68,14 +68,8 @@ async fn post_post(mut post: web::Json<Post>, data: web::Data<AppState>) -> impl
 #[get("/hugo")]
 async fn hugo(data: web::Data<AppState>) -> impl Responder {
     let hugo_person = data.hugo.lock().unwrap();
-    let mut counter = data.request_amount.lock().unwrap();
-    *counter += 1;
 
     HttpResponse::Ok()
-        .header(
-            HeaderName::from_static("request-amount"),
-            HeaderValue::from(*counter),
-        )
         .content_type("application/json")
         .body(serde_json::to_string(&*hugo_person).unwrap())
 }
@@ -83,13 +77,17 @@ async fn hugo(data: web::Data<AppState>) -> impl Responder {
 #[post("/hugo")]
 async fn hugo_post(new_hugo: web::Json<Person>, data: web::Data<AppState>) -> impl Responder {
     let mut hugo_person = data.hugo.lock().unwrap();
-
     *hugo_person = new_hugo.clone();
     new_hugo
 }
 
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<(), Box<dyn Error>> {
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect("postgres://postgres:karl@localhost/karlheinz")
+        .await?;
+
     let posts = vec![Post {
         id: 0,
         author: "Hugo Boss".to_string(),
@@ -99,7 +97,6 @@ async fn main() -> std::io::Result<()> {
 
     let data = web::Data::new(AppState {
         posts: Mutex::new(posts),
-        request_amount: Mutex::new(0),
         hugo: Mutex::new(Person {
             name: "Hugo Boss".to_string(),
             age: 40,
@@ -108,6 +105,7 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .data(pool.clone())
             .app_data(data.clone())
             .service(hugo_post)
             .service(hugo)
@@ -116,5 +114,6 @@ async fn main() -> std::io::Result<()> {
     })
         .bind("127.0.0.1:8080")?
         .run()
-        .await
+        .await?;
+    Ok(())
 }
