@@ -1,0 +1,1 @@
+docker run -d -e POSTGRES_PASSWORD=hugo123 -p 5432:5432 --name karldbeinz postgres

@@ -1,47 +1,41 @@
+#[macro_use]
+extern crate diesel;
+extern crate dotenv;
+
+mod models;
+mod schema;
+
 use std::error::Error;
 use std::sync::Mutex;
 
-use actix_web::{App, Either, get, HttpResponse, HttpServer, post, Responder, web};
-use serde::{Deserialize, Serialize};
-use sqlx::postgres::PgPoolOptions;
+use diesel::prelude::*;
+use dotenv::dotenv;
+use std::env;
 
-macro_rules! impl_responder {
-    (for $name: ident) => {
-        impl actix_web::Responder for $name {
-            type Error = actix_web::Error;
-            type Future = std::future::Ready<Result<actix_web::HttpResponse, actix_web::Error>>;
-
-            fn respond_to(self, _req: &actix_web::HttpRequest) -> Self::Future {
-                let body = serde_json::to_string(&self).unwrap();
-
-                std::future::ready(Ok(actix_web::HttpResponse::Ok()
-                    .content_type("application/json")
-                    .body(body)))
-            }
-        }
-    };
-}
-impl_responder!(for Person);
-impl_responder!(for Post);
-
-#[derive(Serialize, Deserialize, Clone)]
-struct Person {
-    name: String,
-    age: i32,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct Post {
-    #[serde(default)]
-    id: usize,
-    author: String,
-    title: String,
-    content: String,
-}
+use crate::models::{Person, Post};
+use actix_web::{get, post, web, App, Either, HttpResponse, HttpServer, Responder};
 
 struct AppState {
     posts: Mutex<Vec<Post>>,
     hugo: Mutex<Person>,
+}
+
+#[get("post")]
+async fn get_posts() -> impl Responder {
+    use crate::schema::posts::dsl::*;
+
+    let results = web::block(|| {
+        let connection = establish_connection();
+        posts.load::<Post>(&connection)
+    })
+    .await
+    .map_err(|e| {
+        eprintln!("{:?}", e);
+        HttpResponse::InternalServerError().finish()
+    })
+    .map(|vec| HttpResponse::Ok().json(vec));
+
+    results
 }
 
 #[get("/post/{id}")]
@@ -60,7 +54,7 @@ async fn get_post(
 #[post("/post")]
 async fn post_post(mut post: web::Json<Post>, data: web::Data<AppState>) -> impl Responder {
     let mut posts = data.posts.lock().unwrap();
-    post.id = posts.len();
+    post.id = posts.len() as i32;
     posts.push(post.clone());
     post
 }
@@ -83,16 +77,16 @@ async fn hugo_post(new_hugo: web::Json<Person>, data: web::Data<AppState>) -> im
 
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect("postgres://postgres:karl@localhost/karlheinz")
-        .await?;
+    /*let pool = PgPoolOptions::new()
+    .max_connections(5)
+    .connect("postgres://postgres:karl@localhost/karlheinz")
+    .await?;*/
 
     let posts = vec![Post {
         id: 0,
         author: "Hugo Boss".to_string(),
         title: "I like winning".to_string(),
-        content: "I really like winning. That's why I always win at everything".to_string(),
+        body: "I really like winning. That's why I always win at everything".to_string(),
     }];
 
     let data = web::Data::new(AppState {
@@ -103,17 +97,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }),
     });
 
+    println!("Started Server...");
     HttpServer::new(move || {
         App::new()
-            .data(pool.clone())
+            //   .data(pool.clone())
             .app_data(data.clone())
             .service(hugo_post)
             .service(hugo)
             .service(get_post)
             .service(post_post)
+            .service(get_posts)
     })
-        .bind("127.0.0.1:8080")?
-        .run()
-        .await?;
+    .bind("127.0.0.1:8080")?
+    .run()
+    .await?;
     Ok(())
+}
+
+pub fn establish_connection() -> PgConnection {
+    dotenv().ok();
+    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    PgConnection::establish(&database_url).expect(&format!("Error connecting to {}", database_url))
 }
