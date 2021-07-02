@@ -30,3 +30,10 @@ pub fn find_person_by_id(con: &PgConnection, person_id: &str) -> QueryResult<Opt
         .optional()?;
     Ok(user)
 }
+
+pub fn find_post_by_id(con: &PgConnection, post_id: i32) -> QueryResult<Option<Post>> {
+    use crate::schema::posts::dsl::*;
+
+    let post = posts.filter(id.eq(post_id)).first::<Post>(con).optional()?;
+    Ok(post)
+}

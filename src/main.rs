@@ -7,7 +7,7 @@ use std::error::Error;
 
 use crate::models::{Person, Post};
 use actix_web::web::Data;
-use actix_web::{get, post, web, App, Either, HttpResponse, HttpServer, Responder};
+use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use dotenv::dotenv;
@@ -21,30 +21,20 @@ type DbPool = Pool<ConnectionManager<PgConnection>>;
 type WebResult<T> = Result<T, actix_web::Error>;
 
 #[get("/post/{id}")]
-async fn get_post(web::Path(path_id): web::Path<usize>) -> impl Responder {
-    use self::schema::posts::dsl::*;
+async fn get_post(
+    web::Path(path_id): web::Path<usize>,
+    pool: Data<DbPool>,
+) -> WebResult<HttpResponse> {
+    let con = pool.get().expect("Could not get connection from pool");
 
-    let result = web::block::<_, Vec<Post>, _>(move || {
-        let connection = establish_connection();
+    let result = web::block(move || actions::find_post_by_id(&con, path_id as i32))
+        .await
+        .map_err(internal_server_error)?;
 
-        posts
-            .filter(id.eq(path_id as i32))
-            .load::<Post>(&connection)
-    })
-    .await
-    .map_err(|e| {
-        eprintln!("{:?}", e);
-        HttpResponse::InternalServerError().finish()
-    })
-    .map(|mut vec| {
-        if vec.len() > 0 {
-            Either::A(HttpResponse::Ok().json(vec.remove(0)))
-        } else {
-            Either::B(HttpResponse::NotFound().finish())
-        }
-    });
-
-    result
+    match result {
+        Some(p) => Ok(HttpResponse::Ok().json(p)),
+        None => Ok(HttpResponse::NotFound().finish()),
+    }
 }
 
 #[get("/post")]
