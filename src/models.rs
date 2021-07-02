@@ -1,3 +1,4 @@
+use super::schema::posts;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Queryable, Clone)]
@@ -9,8 +10,18 @@ pub struct Post {
     pub body: String,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Insertable)]
+#[table_name = "posts"]
+pub struct NewPost<'a> {
+    pub author: &'a str,
+    pub title: &'a str,
+    pub body: &'a str,
+}
+
+#[derive(Serialize, Deserialize, Clone, Queryable)]
 pub struct Person {
+    #[serde(default)]
+    pub id: String,
     pub name: String,
     pub age: i32,
 }
@@ -24,12 +35,11 @@ macro_rules! impl_responder {
             fn respond_to(self, _req: &actix_web::HttpRequest) -> Self::Future {
                 let body = serde_json::to_string(&self).unwrap();
 
-                std::future::ready(Ok(actix_web::HttpResponse::Ok()
-                    .content_type("application/json")
-                    .body(body)))
+                std::future::ready(Ok(actix_web::HttpResponse::Ok().json(body)))
             }
         }
     };
 }
+
 impl_responder!(for Person);
 impl_responder!(for Post);
